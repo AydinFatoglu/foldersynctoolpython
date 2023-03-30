@@ -80,7 +80,8 @@ class FolderSync:
         self.progress.pack(pady=10)
 
         self.sync()
-
+# Schedule the window to be closed after 5 seconds
+        self.window.after(1000, self.window.destroy)
         self.window.mainloop()
 
 if __name__ == "__main__":
