@@ -1,113 +1,94 @@
-import os
-import shutil
-import threading
 import tkinter as tk
-from tkinter import ttk
+import shutil
+import os
+import configparser
 
-
-
-
-
-
-class SyncFiles:
-    def __init__(self, root, src_folder, dst_folder, progress_bar, status):
-        self.root = root
+class FolderSync:
+    def __init__(self, src_folder, dest_folder):
         self.src_folder = src_folder
-        self.dst_folder = dst_folder
-        self.progress_bar = progress_bar
-        self.status = status
-        
+        self.dest_folder = dest_folder
+        self.total_files = 0
+        self.synced_files = 0
+        self.synced_size = 0
 
     def sync(self):
-        # Create a set of all files in the source folder
+        # clear the destination folder if the source folder is empty
+        if not os.listdir(self.src_folder):
+            shutil.rmtree(self.dest_folder)
+            os.makedirs(self.dest_folder)
+            self.progress_var.set("Sync complete!")
+            self.progress.update()
+            return
+
+        # create a set of all files in the source folder
         src_files = set()
         for root, dirs, files in os.walk(self.src_folder):
             for file in files:
-                src_files.add(os.path.relpath(os.path.join(root, file), self.src_folder))
+                src_files.add(os.path.join(root, file))
 
-        # Create a set of all files in the destination folder
-        dst_files = set()
-        for root, dirs, files in os.walk(self.dst_folder):
+        # delete files from the destination folder that are not in the source folder
+        for root, dirs, files in os.walk(self.dest_folder):
             for file in files:
-                dst_files.add(os.path.relpath(os.path.join(root, file), self.dst_folder))
+                dest_file_path = os.path.join(root, file)
+                if dest_file_path not in src_files:
+                    os.remove(dest_file_path)
 
-        # Delete any files in the destination folder that don't exist in the source folder
-        for file in dst_files - src_files:
-            dst_file = os.path.join(self.dst_folder, file)
-            os.remove(dst_file)
-            self.status.set(f"Deleted {os.path.relpath(dst_file, self.dst_folder)}")
-
-        # Synchronize the remaining files
+        # copy files from the source folder to the destination folder
         for root, dirs, files in os.walk(self.src_folder):
-            # Get the destination folder path by replacing the source folder path with the destination folder path
-            dst_root = root.replace(self.src_folder, self.dst_folder, 1)
-
-            # Make sure the destination directory exists, if not, create it
-            if not os.path.isdir(dst_root):
-                os.makedirs(dst_root)
-
             for file in files:
-                src_file = os.path.join(root, file)
-                dst_file = os.path.join(dst_root, file)
+                src_file_path = os.path.join(root, file)
+                dest_file_path = os.path.join(self.dest_folder, os.path.relpath(src_file_path, self.src_folder))
+                dest_folder_path = os.path.dirname(dest_file_path)
 
-                # Check if the file already exists in the destination folder and if it's older than the source file
-                if not os.path.isfile(dst_file) or os.stat(src_file).st_mtime - os.stat(dst_file).st_mtime > 1:
-                    # Copy the file to the destination folder
-                    shutil.copy2(src_file, dst_file)
+                if not os.path.exists(dest_folder_path):
+                    os.makedirs(dest_folder_path)
 
-                    # Update the progress bar and status label
-                    self.progress_bar.step(1)
-                    self.status.set(f"Synchronized {os.path.relpath(src_file, self.src_folder)}")
-                    self.root.update()
+                if not os.path.exists(dest_file_path) or (os.path.exists(dest_file_path) and (os.stat(src_file_path).st_mtime - os.stat(dest_file_path).st_mtime > 1)):
+                    shutil.copy2(src_file_path, dest_file_path)
+                    self.synced_files += 1
+                    self.synced_size += os.stat(src_file_path).st_size
+                self.total_files += 1
 
-class SyncThread(threading.Thread):
-    def __init__(self, sync):
-        threading.Thread.__init__(self)
-        self.sync = sync
+                self.progress_var.set(f"Synced {self.synced_files}/{self.total_files} files ({self.synced_size / (1024 * 1024):.2f} MB)")
+                self.progress.update()
 
-    def run(self):
-        self.sync.sync()
-        self.sync.status.set("Sync completed")
-        self.sync.root.after(2000, self.sync.root.destroy)
+        self.progress_var.set("Sync complete!")
+        self.progress.update()
 
-# Read the source and destination folder paths from the config file
-with open("config.txt") as f:
-    config = f.read().splitlines()
-    src_folder = config[0]
-    dst_folder = config[1]
+    def start_sync(self):
+        self.window = tk.Tk()
+        self.window.title("Folder Sync Tool")
+        
+        #center window
+        width = 300 # Width 
+        height = 90 # Height
 
-# Create the GUI
-root = tk.Tk()
-root.title("Sync Files")
-#center window
-width = 300 # Width 
-height = 90 # Height
-
-screen_width = root.winfo_screenwidth()  # Width of the screen
-screen_height = root.winfo_screenheight() # Height of the screen
+        screen_width = self.window.winfo_screenwidth()  # Width of the screen
+        screen_height = self.window.winfo_screenheight() # Height of the screen
  
-# Calculate Starting X and Y coordinates for Window
-x = (screen_width/2) - (width/2)
-y = (screen_height/2) - (height/2)
+        # Calculate Starting X and Y coordinates for Window
+        x = (screen_width/2) - (width/2)
+        y = (screen_height/2) - (height/2)
  
-root.geometry(
+        self.window.geometry(
 
-'%dx%d+%d+%d' % (width, height, x, y))
+        '%dx%d+%d+%d' % (width, height, x, y))
 
-# Create the status label
-status = tk.StringVar()
-status_label = ttk.Label(root, textvariable=status)
+        self.progress_var = tk.StringVar()
+        self.progress_var.set("Syncing files...")
+        self.progress = tk.Label(self.window, textvariable=self.progress_var)
+        self.progress.pack(pady=10)
 
-# Create the progress bar
-progress_bar = ttk.Progressbar(root, orient="horizontal", length=300, mode="determinate")
+        self.sync()
 
-# Create the layout
-progress_bar.pack(pady=10)
-status_label.pack(pady=5)
+        self.window.mainloop()
 
-# Start the synchronization process in a separate thread
-sync = SyncFiles(root, src_folder, dst_folder, progress_bar, status)
-sync_thread = SyncThread(sync)
-sync_thread.start()
+if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read("config.ini")
 
-root.mainloop()
+    src_folder = config.get("folders", "source_folder")
+    dest_folder = config.get("folders", "destination_folder")
+
+    folder_sync = FolderSync(src_folder, dest_folder)
+    folder_sync.start_sync()
